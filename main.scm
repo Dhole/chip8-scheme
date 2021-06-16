@@ -2,7 +2,9 @@
         (chicken port)
         (chicken format)
         (chicken condition)
+        (chicken memory)
         args
+        miscmacros
         (prefix sdl2 sdl2:))
 
 ;; Print a variable number of strings to stderr
@@ -51,15 +53,66 @@
        (original-handler exception))))
 )
 
+(define screen-width 64)
+(define screen-heigth 32)
+
 ;; Setup SDL objects
 ;; Creates `window`
 (define (sdl-setup scale)
   (define window
-  (sdl2:create-window!
-   "Chip8-scheme"                       ; title
-   'centered  'centered                 ; x, y
-   (* 64 scale)  (* 32 scale)           ; w, h
-   '(shown opengl))                     ; flags
+    (sdl2:create-window!
+     "Chip8-scheme"                                  ; title
+     'centered  'centered                            ; x, y
+     (* screen-width scale)  (* screen-heigth scale) ; w, h
+     '(shown opengl))                                ; flags
+  )
+  (on-exit (lambda () (sdl2:destroy-window! window)))
+  (define renderer
+    (sdl2:create-renderer! window -1 '())
+  )
+  (on-exit (lambda () (sdl2:destroy-renderer! renderer)))
+  (define texture
+    (sdl2:create-texture renderer 'rgba8888 'streaming screen-width screen-heigth)
+  )
+  (values window renderer texture)
+)
+
+;; Update SDL framebuffer
+(define (sdl-update-fb texture)
+  (receive (pixels pitch)
+    (sdl2:lock-texture-raw! texture #f)
+    (begin
+      (pointer-u8-set! (pointer+ pixels 0) 255)
+      (pointer-u8-set! (pointer+ pixels 1) 255)
+      (pointer-u8-set! (pointer+ pixels 2) 255)
+      (pointer-u8-set! (pointer+ pixels 3) 255)
+    )
+  )
+  (sdl2:unlock-texture! texture)
+)
+
+(define (main-loop renderer texture)
+  (let ((done #f))
+    (while (not done)
+           (let ((ev (sdl2:poll-event!)))
+             (when ev
+               (case (sdl2:event-type ev)
+                 ((quit)
+                  (set! done #t))
+                 ((key-down)
+                  (case (sdl2:keyboard-event-sym ev)
+                    ((escape)
+                     (set! done #t))
+                  )
+                )
+               )
+             )
+          )
+          (sdl-update-fb texture)
+          (sdl2:render-copy! renderer texture #f #f)
+          (sdl2:render-present! renderer)
+          (sdl2:delay! 100)
+    )
   )
 )
 
@@ -76,7 +129,10 @@
       (print "--scale -> " scale)
       (print "rom-path -> " rom-path)
       (sdl-init)
-      (sdl-setup scale)
+      (receive (window renderer texture)
+               (sdl-setup scale)
+               (sdl-update-fb texture)
+               (main-loop renderer texture))
    )
 )
 
