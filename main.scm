@@ -3,9 +3,65 @@
         (chicken format)
         (chicken condition)
         (chicken memory)
+        defstruct
         args
         miscmacros
         (prefix sdl2 sdl2:))
+
+;; Chip8
+
+(define screen-width 64)
+(define screen-heigth 32)
+(define mem-size #x1000)
+(define rom-addr #x200)
+
+(defstruct chip8
+           mem
+           v
+           i
+           pc
+           stack
+           sp
+           dt
+           st
+           keypad
+           fb
+           tone
+           time
+           rng)
+
+(define (new-chip8)
+  (let ((ch8 (make-chip8)))
+    (chip8-mem-set! ch8 (make-vector mem-size))
+    (chip8-v-set! ch8 (make-vector #x10))
+    (chip8-i-set! ch8 0)
+    (chip8-pc-set! ch8 rom-addr)
+    (chip8-stack-set! ch8 (make-vector #x10))
+    (chip8-sp-set! ch8 0)
+    (chip8-dt-set! ch8 0)
+    (chip8-st-set! ch8 0)
+    (chip8-keypad-set! ch8 0)
+    (chip8-fb-set! ch8 (make-vector (/ (* screen-width screen-heigth) 8)))
+    (chip8-tone-set! ch8 #f)
+    (chip8-time-set! ch8 0)
+    (chip8-rng-set! ch8 '())
+    ch8
+  )
+)
+
+(define (chip8-load-rom ch8 rom)
+  (let ((mem (chip8-mem ch8))
+        (rom-len (vector-length rom)))
+    (let copy ((i 0))
+      (unless (= i rom-len)
+          (begin
+            (vector-set! mem (+ rom-addr i) (vector-ref rom i))
+            (copy (+ i 1))
+          )
+      )
+    )
+  )
+)
 
 ;; Print a variable number of strings to stderr
 (define print-err
@@ -53,9 +109,6 @@
        (original-handler exception))))
 )
 
-(define screen-width 64)
-(define screen-heigth 32)
-
 ;; Setup SDL objects
 ;; Creates `window`
 (define (sdl-setup scale)
@@ -100,18 +153,10 @@
                                          '(#xff #xff #xff #xff)
                                          '(#xff #x00 #x00 #x00))
                   )
-                  ; (for-each (lambda (ch) (pointer-u8-set! (pointer+ pixel ch) 255))
-                  ;           '(0 1 2 3))
             )
-            ; (print (format "~a ~a" x y))
           )
         )
       )
-      ; (pointer-u8-set! (pointer+ pixels 0) 255)
-      ; (pointer-u8-set! (pointer+ pixels 1) 255)
-      ; (pointer-u8-set! (pointer+ pixels 2) 255)
-      ; (pointer-u8-set! (pointer+ pixels 3) 255)
-      ; (exit 0)
     )
   )
   (sdl2:unlock-texture! texture)
@@ -142,6 +187,24 @@
   )
 )
 
+(define (read-rom-file path)
+  (define in (open-input-file path))
+  (define rom (make-vector (- mem-size rom-addr)))
+  (let copy ((i 0))
+    (let ((b (read-char in)))
+      (unless (eof-object? b)
+        (begin
+          ; (display b)
+          (vector-set! rom i b)
+          (copy (+ i 1))
+        )
+      )
+    )
+  )
+  (close-input-port in)
+  rom
+)
+
 ;; Bind arguments and run everything
 (receive (options operands)
     (args:parse (command-line-arguments) opts)
@@ -155,6 +218,11 @@
       (print "--scale -> " scale)
       (print "rom-path -> " rom-path)
       (sdl-init)
+
+      (define rom (read-rom-file rom-path))
+
+      (define ch8 (new-chip8))
+      (chip8-load-rom ch8 rom)
       (receive (window renderer texture)
                (sdl-setup scale)
                (sdl-update-fb texture)

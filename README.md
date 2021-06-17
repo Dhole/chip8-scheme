@@ -8,6 +8,8 @@ source env.sh
 chicken-install sdl2
 chicken-install args
 chicken-install format
+chicken-install memory
+chicken-install defstruct
 ```
 
 ```sh
