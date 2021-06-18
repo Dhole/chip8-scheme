@@ -14,6 +14,7 @@
 (define screen-heigth 32)
 (define mem-size #x1000)
 (define rom-addr #x200)
+(define fb-len (/ (* screen-width screen-heigth) 8))
 
 (defstruct chip8
            mem
@@ -41,7 +42,7 @@
     (chip8-dt-set! ch8 0)
     (chip8-st-set! ch8 0)
     (chip8-keypad-set! ch8 0)
-    (chip8-fb-set! ch8 (make-vector (/ (* screen-width screen-heigth) 8)))
+    (chip8-fb-set! ch8 (make-vector fb-len))
     (chip8-tone-set! ch8 #f)
     (chip8-time-set! ch8 0)
     (chip8-rng-set! ch8 '())
@@ -62,6 +63,209 @@
     )
   )
 )
+
+;; Op: Clear the display.
+(define (chip8-op-cls ch8)
+  (let clear ((i 0))
+    (unless (= i fb-len)
+      (begin
+        (vector-set! (chip8-fb ch8) i 0)
+        (clear (+ i 1)))))
+  (chip8-pc-set! ch8 (+ (chip8-pc ch8) 2))
+  109)
+
+(define (chip8-op-call-rca-1802 ch8 addr)
+  100)
+
+;; Op: Return from a subroutine.
+(define (chip8-op-ret ch8)
+  (chip8-sp-set! ch8 (- (chip8-sp ch8) 1))
+  (chip8-pc-set! ch8 (vector-ref (chip8-stack ch8) (chip8-sp ch8)))
+  105)
+
+;; Op: Jump to addr.
+(define (chip8-op-jp ch8 addr)
+  (chip8-pc-set! ch8 addr)
+  105)
+
+;; Op: Call subroutine at addr.
+(define (chip8-op-call ch8 addr)
+  (vector-set! (chip8-stack ch8) (chip8-sp ch8) (+ (chip8-pc ch8) 2))
+  (chip8-sp-set! ch8 (+ (chip8-sp ch8) 1))
+  (chip8-pc-set! ch8 addr)
+  105)
+
+; Op: Skip next instruction if a == b.
+(define (chip8-op-se ch8 a b)
+  (if (= a b)
+      (chip8-pc-set! ch8 (+ (chip8-pc ch8) 4))
+      (chip8-pc-set! ch8 (+ (chip8-pc ch8) 2)))
+  61
+)
+
+; Op: Skip next instruction if a != b.
+(define (chip8-op-sne ch8 a b)
+  (if (not (= a b))
+      (chip8-pc-set! ch8 (+ (chip8-pc ch8) 4))
+      (chip8-pc-set! ch8 (+ (chip8-pc ch8) 2)))
+  61
+)
+
+; Op: Set Vx = v.
+(define (chip8-op-ld ch8 x v)
+  (vector-set! (chip8-v ch8) x v)
+  27
+)
+; /// Op: Wait for a key press, store the value of the key in Vx.
+; fn op_ld_vx_k(self: *Self, x: u8) usize {
+;     var i: u8 = 0;
+;     while (i < 0x10) : (i += 1) {
+;         if (testBit(self.keypad, i)) {
+;             self.v[x] = i;
+;             self.pc += 2;
+;             break;
+;         }
+;     }
+;     return 200;
+; }
+
+; Op: Set delay timer = Vx.
+(define (chip8-op-ld-dt ch8 v)
+  (chip8-dt-set! ch8 v)
+  (chip8-pc-set! ch8 (+ (chip8-pc ch8) 2))
+  45)
+
+; Op: Set sound timer = Vx.
+(define (chip8-op-ld-st ch8 v)
+  (chip8-st-set! ch8 v)
+  (chip8-pc-set! ch8 (+ (chip8-pc ch8) 2))
+  45)
+
+(define (test ch8)
+  (chip8-op-cls ch8)
+  (chip8-op-call-rca-1802 ch8 0)
+  (chip8-op-call ch8 0)
+  (chip8-op-ret ch8)
+  (chip8-op-jp ch8 0)
+  (chip8-op-se ch8 0 0)
+  (chip8-op-sne ch8 0 0)
+  (chip8-op-ld ch8 0 0)
+  (chip8-op-ld-dt ch8 0)
+  (chip8-op-ld-st ch8 0)
+)
+
+; /// Op: Set I = location of sprite for digit v.
+; fn op_ld_f(self: *Self, v: u8) usize {
+;     self.i = SPRITE_CHARS_ADDR + v * @as(u16, SPRITE_CHAR_LEN);
+;     self.pc += 2;
+;     return 91;
+; }
+
+; /// Op: Store BCD representation of v in memory locations I, I+1, and I+2.
+; fn op_ld_b(self: *Self, _v: u8) usize {
+;     var v = _v;
+;     const d2 = v / 100;
+;     v = v - d2 * 100;
+;     const d1 = v / 10;
+;     v = v - d1 * 10;
+;     const d0 = v / 1;
+;     self.mem[self.i + 0] = d2;
+;     self.mem[self.i + 1] = d1;
+;     self.mem[self.i + 2] = d0;
+;     self.pc += 2;
+;     return 927;
+; }
+;
+; /// Op: Store registers V0 through Vx in memory starting at location I.
+; fn op_ld_i_vx(self: *Self, x: u8) usize {
+;     var i: usize = 0;
+;     while (i < x + 1) : (i += 1) {
+;         self.mem[self.i + i] = self.v[i];
+;     }
+;     self.pc += 2;
+;     return 605;
+; }
+; /// Op: Read registers V0 through Vx from memory starting at location I.
+; fn op_ld_vx_i(self: *Self, x: u8) usize {
+;     var i: usize = 0;
+;     while (i < x + 1) : (i += 1) {
+;         self.v[i] = self.mem[self.i + i];
+;     }
+;     self.pc += 2;
+;     return 605;
+; }
+; /// Op: Set Vx = Vx + b.
+; fn op_add(self: *Self, x: u8, b: u8) usize {
+;     const overflow = @addWithOverflow(u8, self.v[x], b, &self.v[x]);
+;     self.v[0xf] = if (overflow) 1 else 0;
+;     self.pc += 2;
+;     return 45;
+; }
+
+; Op: Set I = I + b.
+(define (chip8-op-add16 b)
+  (chip8-i-set! ch8 (+ (chip8-i ch8) b))
+  (chip8-pc-set! ch8 (+ (chip8-pc ch8) 2))
+  86)
+
+; /// Op: Set Vx = Vx OR b.
+; fn op_or(self: *Self, x: u8, b: u8) usize {
+;     self.v[x] |= b;
+;     self.pc += 2;
+;     return 200;
+; }
+; /// Op: Set Vx = Vx AND b.
+; fn op_and(self: *Self, x: u8, b: u8) usize {
+;     self.v[x] &= b;
+;     self.pc += 2;
+;     return 200;
+; }
+; /// Op: Set Vx = Vx XOR b.
+; fn op_xor(self: *Self, x: u8, b: u8) usize {
+;     self.v[x] ^= b;
+;     self.pc += 2;
+;     return 200;
+; }
+; /// Op: Set Vx = Vx - b.
+; fn op_sub(self: *Self, x: u8, b: u8) usize {
+;     const overflow = @subWithOverflow(u8, self.v[x], b, &self.v[x]);
+;     self.v[0xf] = if (overflow) 1 else 0;
+;     self.pc += 2;
+;     return 200;
+; }
+; /// Op: Set Vx = b - Vx, set Vf = NOT borrow.
+; fn op_subn(self: *Self, x: u8, b: u8) usize {
+;     const overflow = @subWithOverflow(u8, self.v[x], b, &self.v[x]);
+;     self.v[0xf] = if (overflow) 0 else 1;
+;     self.pc += 2;
+;     return 200;
+; }
+; /// Op: Set Vx = Vx >> 1.
+; fn op_shr(self: *Self, x: u8) usize {
+;     const overflow = shr1WithOverflow(u8, self.v[x], &self.v[x]);
+;     self.v[0xf] = if (overflow) 1 else 0;
+;     self.pc += 2;
+;     return 200;
+; }
+; /// Op: Set Vx = Vx << 1.
+; fn op_shl(self: *Self, x: u8) usize {
+;     const overflow = @shlWithOverflow(u8, self.v[x], 1, &self.v[x]);
+;     self.v[0xf] = if (overflow) 1 else 0;
+;     self.pc += 2;
+;     return 200;
+; }
+; /// Op: Set I = addr
+; fn op_ld_i(self: *Self, addr: u16) usize {
+;     self.i = addr;
+;     self.pc += 2;
+;     return 55;
+; }
+; /// Op: Set Vx = random byte AND v
+; fn op_rnd(self: *Self, x: u8, v: u8) usize {
+;     self.v[x] = (self.rng.random.int(u8)) & v;
+;     self.pc += 2;
+;     return 164;
+; }
 
 ;; Print a variable number of strings to stderr
 (define print-err
@@ -223,6 +427,7 @@
 
       (define ch8 (new-chip8))
       (chip8-load-rom ch8 rom)
+      (test ch8)
       (receive (window renderer texture)
                (sdl-setup scale)
                (sdl-update-fb texture)
