@@ -3,9 +3,12 @@
         (chicken format)
         (chicken condition)
         (chicken memory)
+        (chicken bitwise)
+        (chicken random)
         defstruct
         args
         miscmacros
+        modular-arithmetic
         (prefix sdl2 sdl2:))
 
 ;; Chip8
@@ -15,6 +18,13 @@
 (define mem-size #x1000)
 (define rom-addr #x200)
 (define fb-len (/ (* screen-width screen-heigth) 8))
+
+(define (+u8 a b)
+  ((mod+ #x100) a b))
+(define (-u8 a b)
+  ((mod- #x100) a b))
+(define (+u16 a b)
+  ((mod+ #x10000) a b))
 
 (defstruct chip8
            mem
@@ -71,7 +81,7 @@
       (begin
         (vector-set! (chip8-fb ch8) i 0)
         (clear (+ i 1)))))
-  (chip8-pc-set! ch8 (+ (chip8-pc ch8) 2))
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   109)
 
 (define (chip8-op-call-rca-1802 ch8 addr)
@@ -90,24 +100,24 @@
 
 ;; Op: Call subroutine at addr.
 (define (chip8-op-call ch8 addr)
-  (vector-set! (chip8-stack ch8) (chip8-sp ch8) (+ (chip8-pc ch8) 2))
-  (chip8-sp-set! ch8 (+ (chip8-sp ch8) 1))
+  (vector-set! (chip8-stack ch8) (chip8-sp ch8) (+u16 (chip8-pc ch8) 2))
+  (chip8-sp-set! ch8 (+u8 (chip8-sp ch8) 1))
   (chip8-pc-set! ch8 addr)
   105)
 
 ; Op: Skip next instruction if a == b.
 (define (chip8-op-se ch8 a b)
   (if (= a b)
-      (chip8-pc-set! ch8 (+ (chip8-pc ch8) 4))
-      (chip8-pc-set! ch8 (+ (chip8-pc ch8) 2)))
+      (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 4))
+      (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2)))
   61
 )
 
 ; Op: Skip next instruction if a != b.
 (define (chip8-op-sne ch8 a b)
   (if (not (= a b))
-      (chip8-pc-set! ch8 (+ (chip8-pc ch8) 4))
-      (chip8-pc-set! ch8 (+ (chip8-pc ch8) 2)))
+      (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 4))
+      (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2)))
   61
 )
 
@@ -132,27 +142,14 @@
 ; Op: Set delay timer = Vx.
 (define (chip8-op-ld-dt ch8 v)
   (chip8-dt-set! ch8 v)
-  (chip8-pc-set! ch8 (+ (chip8-pc ch8) 2))
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   45)
 
 ; Op: Set sound timer = Vx.
 (define (chip8-op-ld-st ch8 v)
   (chip8-st-set! ch8 v)
-  (chip8-pc-set! ch8 (+ (chip8-pc ch8) 2))
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   45)
-
-(define (test ch8)
-  (chip8-op-cls ch8)
-  (chip8-op-call-rca-1802 ch8 0)
-  (chip8-op-call ch8 0)
-  (chip8-op-ret ch8)
-  (chip8-op-jp ch8 0)
-  (chip8-op-se ch8 0 0)
-  (chip8-op-sne ch8 0 0)
-  (chip8-op-ld ch8 0 0)
-  (chip8-op-ld-dt ch8 0)
-  (chip8-op-ld-st ch8 0)
-)
 
 ; /// Op: Set I = location of sprite for digit v.
 ; fn op_ld_f(self: *Self, v: u8) usize {
@@ -203,69 +200,127 @@
 ; }
 
 ; Op: Set I = I + b.
-(define (chip8-op-add16 b)
-  (chip8-i-set! ch8 (+ (chip8-i ch8) b))
-  (chip8-pc-set! ch8 (+ (chip8-pc ch8) 2))
+(define (chip8-op-add16 ch8 b)
+  (chip8-i-set! ch8 (+u16 (chip8-i ch8) b))
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   86)
 
-; /// Op: Set Vx = Vx OR b.
-; fn op_or(self: *Self, x: u8, b: u8) usize {
-;     self.v[x] |= b;
-;     self.pc += 2;
-;     return 200;
-; }
-; /// Op: Set Vx = Vx AND b.
-; fn op_and(self: *Self, x: u8, b: u8) usize {
-;     self.v[x] &= b;
-;     self.pc += 2;
-;     return 200;
-; }
-; /// Op: Set Vx = Vx XOR b.
-; fn op_xor(self: *Self, x: u8, b: u8) usize {
-;     self.v[x] ^= b;
-;     self.pc += 2;
-;     return 200;
-; }
-; /// Op: Set Vx = Vx - b.
-; fn op_sub(self: *Self, x: u8, b: u8) usize {
-;     const overflow = @subWithOverflow(u8, self.v[x], b, &self.v[x]);
-;     self.v[0xf] = if (overflow) 1 else 0;
-;     self.pc += 2;
-;     return 200;
-; }
-; /// Op: Set Vx = b - Vx, set Vf = NOT borrow.
-; fn op_subn(self: *Self, x: u8, b: u8) usize {
-;     const overflow = @subWithOverflow(u8, self.v[x], b, &self.v[x]);
-;     self.v[0xf] = if (overflow) 0 else 1;
-;     self.pc += 2;
-;     return 200;
-; }
-; /// Op: Set Vx = Vx >> 1.
-; fn op_shr(self: *Self, x: u8) usize {
-;     const overflow = shr1WithOverflow(u8, self.v[x], &self.v[x]);
-;     self.v[0xf] = if (overflow) 1 else 0;
-;     self.pc += 2;
-;     return 200;
-; }
-; /// Op: Set Vx = Vx << 1.
-; fn op_shl(self: *Self, x: u8) usize {
-;     const overflow = @shlWithOverflow(u8, self.v[x], 1, &self.v[x]);
-;     self.v[0xf] = if (overflow) 1 else 0;
-;     self.pc += 2;
-;     return 200;
-; }
-; /// Op: Set I = addr
-; fn op_ld_i(self: *Self, addr: u16) usize {
-;     self.i = addr;
-;     self.pc += 2;
-;     return 55;
-; }
-; /// Op: Set Vx = random byte AND v
-; fn op_rnd(self: *Self, x: u8, v: u8) usize {
-;     self.v[x] = (self.rng.random.int(u8)) & v;
-;     self.pc += 2;
-;     return 164;
-; }
+; Op: Set Vx = Vx OR b.
+(define (chip8-op-or ch8 x b)
+  (vector-set! (chip8-v ch8)
+               (bitwise-ior (vector-ref (chip8-v ch8) x) b)
+               x)
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
+  200)
+
+; Op: Set Vx = Vx AND b.
+(define (chip8-op-and ch8 x b)
+  (vector-set! (chip8-v ch8)
+               (bitwise-and (vector-ref (chip8-v ch8) x) b)
+               x)
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
+  200)
+
+; Op: Set Vx = Vx XOR b.
+(define (chip8-op-xor ch8 x b)
+  (vector-set! (chip8-v ch8)
+               (bitwise-xor (vector-ref (chip8-v ch8) x) b)
+               x)
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
+  200)
+
+; Op: Set Vx = Vx - b.
+(define (chip8-op-sub ch8 x b)
+  (let ((vx (vector-ref (chip8-v ch8) x)))
+    (vector-set! (chip8-v ch8)
+                 (if (> b vx)
+                     1
+                     0)
+                 #xf)
+    (vector-set! (chip8-v ch8)
+                 (-u8 vx b)
+                 x))
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
+  200)
+
+; Op: Set Vx = b - Vx, set Vf = NOT borrow.
+(define (chip8-op-subn ch8 x b)
+  (let ((vx (vector-ref (chip8-v ch8) x)))
+    (vector-set! (chip8-v ch8)
+                 (if (> b vx)
+                     0
+                     1)
+                 #xf)
+    (vector-set! (chip8-v ch8)
+                 (-u8 vx b)
+                 x))
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
+  200)
+
+; Op: Set Vx = Vx >> 1.
+(define (chip8-op-shr ch8 x)
+  (let ((vx (vector-ref (chip8-v ch8) x)))
+    (vector-set! (chip8-v ch8)
+                 (if (eq? (bitwise-and vx #x01) #x01)
+                     1
+                     0)
+                 #xf)
+    (vector-set! (chip8-v ch8)
+                 (arithmetic-shift vx -1)
+                 x))
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
+  200)
+
+; Op: Set Vx = Vx << 1.
+(define (chip8-op-shl ch8 x)
+  (let ((vx (vector-ref (chip8-v ch8) x)))
+    (vector-set! (chip8-v ch8)
+                 (if (eq? (bitwise-and vx #x80) #x80)
+                     1
+                     0)
+                 #xf)
+    (vector-set! (chip8-v ch8)
+                 (arithmetic-shift vx 1)
+                 x))
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
+  200)
+
+; Op: Set I = addr
+(define (chip8-op-ld-i ch8 addr)
+  (chip8-i-set! ch8 addr)
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
+  55)
+
+; Op: Set Vx = random byte AND v
+(define (chip8-op-rnd ch8 x v)
+  (vector-set! (chip8-v ch8)
+               (bitwise-and (pseudo-random-integer  #x100) v)
+               x)
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
+  164)
+
+(define (test ch8)
+  (chip8-op-cls ch8)
+  (chip8-op-call-rca-1802 ch8 0)
+  (chip8-op-call ch8 0)
+  (chip8-op-ret ch8)
+  (chip8-op-jp ch8 0)
+  (chip8-op-se ch8 0 0)
+  (chip8-op-sne ch8 0 0)
+  (chip8-op-ld ch8 0 0)
+  (chip8-op-ld-dt ch8 0)
+  (chip8-op-ld-st ch8 0)
+  (chip8-op-add16 ch8 0)
+  (chip8-op-or ch8 0 0)
+  (chip8-op-and ch8 0 0)
+  (chip8-op-xor ch8 0 0)
+  (chip8-op-sub ch8 0 0)
+  (chip8-op-subn ch8 0 0)
+  (chip8-op-shr ch8 0)
+  (chip8-op-shl ch8 0)
+  (chip8-op-ld-i ch8 0)
+  (chip8-op-rnd ch8 0 0)
+)
 
 ;; Print a variable number of strings to stderr
 (define print-err

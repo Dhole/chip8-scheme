@@ -10,6 +10,7 @@ chicken-install args
 chicken-install format
 chicken-install memory
 chicken-install defstruct
+chicken-install modular-arithmetic
 ```
 
 ```sh
