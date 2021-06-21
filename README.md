@@ -11,6 +11,7 @@ chicken-install format
 chicken-install memory
 chicken-install defstruct
 chicken-install modular-arithmetic
+chicken-install srfi-151
 ```
 
 ```sh

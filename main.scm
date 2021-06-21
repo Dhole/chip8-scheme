@@ -3,8 +3,8 @@
         (chicken format)
         (chicken condition)
         (chicken memory)
-        (chicken bitwise)
         (chicken random)
+        srfi-151
         defstruct
         args
         miscmacros
@@ -17,6 +17,8 @@
 (define screen-heigth 32)
 (define mem-size #x1000)
 (define rom-addr #x200)
+(define sprite-char-length 5)
+(define sprite-chars-addr #x0000)
 (define fb-len (/ (* screen-width screen-heigth) 8))
 
 (define (+u8 a b)
@@ -41,18 +43,27 @@
            time
            rng)
 
+(define (make-zero-vector length)
+  (let ((v (make-vector length)))
+    (let zero ((i 0))
+      (unless (= i length)
+        (begin
+          (vector-set! v i 0)
+          (zero (+ i 1)))))
+    v))
+
 (define (new-chip8)
   (let ((ch8 (make-chip8)))
-    (chip8-mem-set! ch8 (make-vector mem-size))
-    (chip8-v-set! ch8 (make-vector #x10))
+    (chip8-mem-set! ch8 (make-zero-vector mem-size))
+    (chip8-v-set! ch8 (make-zero-vector #x10))
     (chip8-i-set! ch8 0)
     (chip8-pc-set! ch8 rom-addr)
-    (chip8-stack-set! ch8 (make-vector #x10))
+    (chip8-stack-set! ch8 (make-zero-vector #x10))
     (chip8-sp-set! ch8 0)
     (chip8-dt-set! ch8 0)
     (chip8-st-set! ch8 0)
     (chip8-keypad-set! ch8 0)
-    (chip8-fb-set! ch8 (make-vector fb-len))
+    (chip8-fb-set! ch8 (make-zero-vector fb-len))
     (chip8-tone-set! ch8 #f)
     (chip8-time-set! ch8 0)
     (chip8-rng-set! ch8 '())
@@ -110,34 +121,30 @@
   (if (= a b)
       (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 4))
       (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2)))
-  61
-)
+  61)
 
 ; Op: Skip next instruction if a != b.
 (define (chip8-op-sne ch8 a b)
   (if (not (= a b))
       (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 4))
       (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2)))
-  61
-)
+  61)
 
 ; Op: Set Vx = v.
 (define (chip8-op-ld ch8 x v)
   (vector-set! (chip8-v ch8) x v)
-  27
-)
-; /// Op: Wait for a key press, store the value of the key in Vx.
-; fn op_ld_vx_k(self: *Self, x: u8) usize {
-;     var i: u8 = 0;
-;     while (i < 0x10) : (i += 1) {
-;         if (testBit(self.keypad, i)) {
-;             self.v[x] = i;
-;             self.pc += 2;
-;             break;
-;         }
-;     }
-;     return 200;
-; }
+  27)
+
+; Op: Wait for a key press, store the value of the key in Vx.
+(define (chip8-op-ld-vx-k ch8 x)
+  (let test ((i 0))
+    (unless (= i #x10)
+      (if (bit-set? i (chip8-keypad ch8))
+          (begin
+            (vector-set! (chip8-v ch8) x i)
+            (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2)))
+          (test (+ i 1)))))
+  200)
 
 ; Op: Set delay timer = Vx.
 (define (chip8-op-ld-dt ch8 v)
@@ -151,53 +158,64 @@
   (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   45)
 
-; /// Op: Set I = location of sprite for digit v.
-; fn op_ld_f(self: *Self, v: u8) usize {
-;     self.i = SPRITE_CHARS_ADDR + v * @as(u16, SPRITE_CHAR_LEN);
-;     self.pc += 2;
-;     return 91;
-; }
+; Op: Set I = location of sprite for digit v.
+(define (chip8-op-ld-f ch8 v)
+  (chip8-i-set! ch8 (+u16 sprite-chars-addr (* v sprite-char-length)))
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
+  91)
 
-; /// Op: Store BCD representation of v in memory locations I, I+1, and I+2.
-; fn op_ld_b(self: *Self, _v: u8) usize {
-;     var v = _v;
-;     const d2 = v / 100;
-;     v = v - d2 * 100;
-;     const d1 = v / 10;
-;     v = v - d1 * 10;
-;     const d0 = v / 1;
-;     self.mem[self.i + 0] = d2;
-;     self.mem[self.i + 1] = d1;
-;     self.mem[self.i + 2] = d0;
-;     self.pc += 2;
-;     return 927;
-; }
-;
-; /// Op: Store registers V0 through Vx in memory starting at location I.
-; fn op_ld_i_vx(self: *Self, x: u8) usize {
-;     var i: usize = 0;
-;     while (i < x + 1) : (i += 1) {
-;         self.mem[self.i + i] = self.v[i];
-;     }
-;     self.pc += 2;
-;     return 605;
-; }
-; /// Op: Read registers V0 through Vx from memory starting at location I.
-; fn op_ld_vx_i(self: *Self, x: u8) usize {
-;     var i: usize = 0;
-;     while (i < x + 1) : (i += 1) {
-;         self.v[i] = self.mem[self.i + i];
-;     }
-;     self.pc += 2;
-;     return 605;
-; }
-; /// Op: Set Vx = Vx + b.
-; fn op_add(self: *Self, x: u8, b: u8) usize {
-;     const overflow = @addWithOverflow(u8, self.v[x], b, &self.v[x]);
-;     self.v[0xf] = if (overflow) 1 else 0;
-;     self.pc += 2;
-;     return 45;
-; }
+; Op: Store BCD representation of v in memory locations I, I+1, and I+2.
+(define (chip8-op-ld-b ch8 v)
+  (let* ((d2 (truncate (/ v 100)))
+         (v1 (- v (* d2 100)))
+         (d1 (truncate (/ v1 10)))
+         (v2 (- v1 (* d1 10)))
+         (d0 v2))
+    (vector-set! (chip8-mem ch8) (+ (chip8-i ch8) 0) d2)
+    (vector-set! (chip8-mem ch8) (+ (chip8-i ch8) 1) d1)
+    (vector-set! (chip8-mem ch8) (+ (chip8-i ch8) 2) d0))
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
+  927)
+
+; Op: Store registers V0 through Vx in memory starting at location I.
+(define (chip8-op-ld-i-vx ch8 x)
+  (let ((mem (chip8-mem ch8))
+        (v (chip8-v ch8))
+        (ch8-i (chip8-i ch8)))
+       (let copy ((i 0))
+         (unless (= i (+ x 1))
+           (begin
+             (vector-set! mem (+ ch8-i i) (vector-ref v i))
+             (copy (+ i 1))))))
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
+  605)
+
+; Op: Read registers V0 through Vx from memory starting at location I.
+(define (chip8-op-ld-vx-i ch8 x)
+  (let ((mem (chip8-mem ch8))
+        (v (chip8-v ch8))
+        (ch8-i (chip8-i ch8)))
+       (let copy ((i 0))
+         (unless (= i (+ x 1))
+           (begin
+             (vector-set! v i (vector-ref mem (+ ch8-i i)))
+             (copy (+ i 1))))))
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
+  605)
+
+; Op: Set Vx = Vx + b.
+(define (chip8-op-add ch8 x b)
+  (let ((vx (vector-ref (chip8-v ch8) x)))
+    (vector-set! (chip8-v ch8)
+                 (if (> (+ vx b) #xff)
+                     1
+                     0)
+                 #xf)
+    (vector-set! (chip8-v ch8)
+                 (+u8 vx b)
+                 x))
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
+  200)
 
 ; Op: Set I = I + b.
 (define (chip8-op-add16 ch8 b)
@@ -299,6 +317,47 @@
   (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   164)
 
+; Op: Display n-byte sprite starting at memory location I at (Vx, Vy), set VF = collision.
+(define (chip8-op-drw ch8 pos-x pos-y n)
+  (define collision 0)
+  (let* ((pos-x (remainder pos-x 64))
+         (pos-y (remainder pos-y 32))
+         (shift (remainder pos-x 8))
+         (col-a (truncate (/ pos-x 8)))
+         (col-b (remainder (+ col-a 1) (/ screen-width 8)))
+         (fb (chip8-fb ch8)))
+         (let draw ((i 0))
+           (let* ((byte (vector-ref (chip8-mem ch8) (+ (chip8-i ch8) i)))
+                  (y (remainder (+ pos-y i) screen-heigth))
+                  (a (arithmetic-shift byte (- 0 shift)))
+                  (off_a (+ (/ (* y screen-width) 8) col-a))
+                 )
+                 (set! collision
+                   (bitwise-ior collision (bitwise-and (vector-ref fb off_a) a)))
+                 (vector-set! fb off_a (bitwise-xor (vector-ref fb off_a) a))
+                 (when (not (= shift 0))
+                   (let ((b (arithmetic-shift byte (+ -8 shift)))
+                         (off_b (+ (/ (* y screen-width) 8) col-b)))
+                        (set! collision
+                          (bitwise-ior collision (bitwise-and (vector-ref fb off_b) b)))
+                        (vector-set! fb off_b (bitwise-xor (vector-ref fb off_b) b)
+                   )
+                 )
+             )
+           (unless (= i n)
+             (begin
+               (vector-set! v i 0)
+               (zero (+ i 1)))))
+      )
+      (vector-set! (chip8-v ch8)
+                   (if (not (= collision 0))
+                       1
+                       0)
+                   #xf)
+  )
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
+  22734)
+
 (define (test ch8)
   (chip8-op-cls ch8)
   (chip8-op-call-rca-1802 ch8 0)
@@ -308,8 +367,14 @@
   (chip8-op-se ch8 0 0)
   (chip8-op-sne ch8 0 0)
   (chip8-op-ld ch8 0 0)
+  (chip8-op-ld-vx-k ch8 0)
   (chip8-op-ld-dt ch8 0)
   (chip8-op-ld-st ch8 0)
+  (chip8-op-ld-f ch8 0)
+  (chip8-op-ld-b ch8 2)
+  (chip8-op-ld-i-vx ch8 2)
+  (chip8-op-ld-vx-i ch8 2)
+  (chip8-op-add ch8 0 0)
   (chip8-op-add16 ch8 0)
   (chip8-op-or ch8 0 0)
   (chip8-op-and ch8 0 0)
@@ -320,6 +385,7 @@
   (chip8-op-shl ch8 0)
   (chip8-op-ld-i ch8 0)
   (chip8-op-rnd ch8 0 0)
+  (chip8-op-drw ch8 0 0 0)
 )
 
 ;; Print a variable number of strings to stderr
