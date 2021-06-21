@@ -358,6 +358,183 @@
   (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   22734)
 
+(define (nnn w0 w1)
+  (bitwise-ior (arithmetic-shift (bitwise-and w0 #x0f) 8) w1))
+
+(define (lo-nib w)
+  (bitwise-and w #x0f))
+
+(define (hi-nib w)
+  (arithmetic-shift (bitwise-and w #xf0) -4))
+
+(define (chip8-v-lo-nib ch8 w)
+  (vector-ref (chip8-v ch8) (lo-nib w)))
+
+(define (chip8-v-hi-nib ch8 w)
+  (vector-ref (chip8-v ch8) (hi-nib w)))
+
+; /// Execute the instruction defined by (w0, w1).  Returns the number of microseconds elapsed.
+; fn exec(self: *Self, w0: u8, w1: u8) !usize {
+;     return switch (w0 & 0xf0) {
+;         0x00 => switch (w1) {
+;             0xe0 => self.op_cls(),
+;             0xee => self.op_ret(),
+;             else => self.op_call_rca_1802(nnn(w0, w1)),
+;         },
+;         0x10 => self.op_jp(nnn(w0, w1)),
+;         0x20 => self.op_call(nnn(w0, w1)),
+;         0x30 => self.op_se(self.v[lo_nib(w0)], w1),
+;         0x40 => self.op_sne(self.v[lo_nib(w0)], w1),
+;         0x50 => self.op_se(self.v[lo_nib(w0)], self.v[hi_nib(w1)]),
+;         0x60 => self.op_ld(lo_nib(w0), w1),
+;         0x70 => self.op_add(lo_nib(w0), w1),
+;         0x80 => blk: {
+;             const a = lo_nib(w0);
+;             const b = self.v[hi_nib(w1)];
+;             break :blk switch (w1 & 0x0f) {
+;                 0x00 => self.op_ld(a, b),
+;                 0x01 => self.op_or(a, b),
+;                 0x02 => self.op_and(a, b),
+;                 0x03 => self.op_xor(a, b),
+;                 0x04 => self.op_add(a, b),
+;                 0x05 => self.op_sub(a, b),
+;                 0x06 => self.op_shr(a),
+;                 0x07 => self.op_subn(a, b),
+;                 0x0E => self.op_shl(a),
+;                 else => return error.InvalidOp,
+;             };
+;         },
+;         0x90 => switch (w1 & 0x0f) {
+;             0x00 => self.op_sne(self.v[lo_nib(w0)], self.v[hi_nib(w1)]),
+;             else => return error.InvalidOp,
+;         },
+;         0xA0 => self.op_ld_i(nnn(w0, w1)),
+;         0xB0 => self.op_jp(self.v[0] + nnn(w0, w1)),
+;         0xC0 => self.op_rnd(lo_nib(w0), w1),
+;         0xD0 => self.op_drw(self.v[lo_nib(w0)], self.v[hi_nib(w1)], lo_nib(w1)),
+;         0xE0 => switch (w1) {
+;             0x9E => self.op_skp(self.v[lo_nib(w0)]),
+;             0xA1 => self.op_sknp(self.v[lo_nib(w0)]),
+;             else => return error.InvalidOp,
+;         },
+;         0xF0 => switch (w1) {
+;             0x07 => self.op_ld(lo_nib(w0), self.dt),
+;             0x0A => self.op_ld_vx_k(lo_nib(w0)),
+;             0x15 => self.op_ld_dt(self.v[lo_nib(w0)]),
+;             0x18 => self.op_ld_st(self.v[lo_nib(w0)]),
+;             0x1E => self.op_add16(self.v[lo_nib(w0)]),
+;             0x29 => self.op_ld_f(self.v[lo_nib(w0)]),
+;             0x33 => self.op_ld_b(self.v[lo_nib(w0)]),
+;             0x55 => self.op_ld_i_vx(lo_nib(w0)),
+;             0x65 => self.op_ld_vx_i(lo_nib(w0)),
+;             else => return error.InvalidOp,
+;         },
+;         else => return error.InvalidOp,
+;     };
+; }
+
+(define (chip8-exec ch8 w0 w1)
+  (case (bitwise-and w0 #xf0)
+    ((#x00) (case w1
+              ((#xe0) (chip8-op-cls ch8))
+              ((#xee) (chip8-op-ret ch8))
+              (else   (chip8-op-call-rca-1802 ch8 (nnn w0 w1)))
+            ))
+    ((#x10) (chip8-op-jp ch8 (nnn w0 w1)))
+    ((#x20) (chip8-op-call ch8 (nnn w0 w1)))
+    ((#x30) (chip8-op-se ch8 (chip8-v-lo-nib ch8 w0) w1))
+    ((#x40) (chip8-op-sne ch8 (chip8-v-lo-nib ch8 w0) w1))
+    ((#x50) (chip8-op-se ch8 (chip8-v-lo-nib ch8 w0) (chip8-v-hi-nib ch8 w1)))
+    ((#x60) (chip8-op-ld ch8 (lo-nib w0) w1))
+    ((#x70) (chip8-op-add ch8 (lo-nib w0) w1))
+    ((#x80) (let ((a (lo-nib w0))
+                  (b (chip8-v-hi-nib ch8 w1)))
+              (case (bitwise-and w1 #x0f)
+                ((#x00) (chip8-op-ld ch8 a b))
+                ((#x01) (chip8-op-or ch8 a b))
+                ((#x02) (chip8-op-and ch8 a b))
+                ((#x03) (chip8-op-xor ch8 a b))
+                ((#x04) (chip8-op-add ch8 a b))
+                ((#x05) (chip8-op-sub ch8 a b))
+                ((#x06) (chip8-op-shr ch8 a))
+                ((#x07) (chip8-op-subn ch8 a b))
+                ((#x0E) (chip8-op-shl ch8 a))
+                (else #f)
+              )
+            ))
+    ((#x90) (case (bitwise-and w1 #x0f)
+              ((#x00) (chip8-op-sne (chip8-v-lo-nib ch8 w0) (chip8-v-hi-nib ch8 w1)))
+              (else #f)
+            ))
+    ((#xA0) (chip8-op-ld-i ch8 (nnn w0 w1)))
+    ((#xB0) (chip8-op-jp ch8 (+ (vector-ref (chip8-v ch8) 0) (nnn w0 w1))))
+    ((#xC0) (chip8-op-rnd ch8 (lo-nib w0) w1))
+    ((#xD0) (chip8-op-drw ch8 (chip8-v-lo-nib ch8 w0) (chip8-v-hi-nib ch8 w1) (lo-nib w1)))
+    ((#xE0) (case w1
+              ((#x9E) (chip8-op-spk ch8 (chip8-v-lo-nib ch8 w0)))
+              ((#xA1) (chip8-op-sknp ch8 (chip8-v-lo-nib ch8 w0)))
+              (else #f)
+            ))
+    ((#xF0) (case w1
+              ((#x07) (chip8-op-ld ch8 (lo-nib w0) (chip8-dt ch8)))
+              ((#x0A) (chip8-op-ld-vx-k ch8 (lo-nib w0)))
+              ((#x15) (chip8-op-ld-dt ch8 (chip8-v-lo-nib ch8 w0)))
+              ((#x18) (chip8-op-ld-st ch8 (chip8-v-lo-nib ch8 w0)))
+              ((#x1E) (chip8-op-add16 ch8 (chip8-v-lo-nib ch8 w0)))
+              ((#x29) (chip8-op-ld-f ch8 (chip8-v-lo-nib ch8 w0)))
+              ((#x33) (chip8-op-ld-b ch8 (chip8-v-lo-nib ch8 w0)))
+              ((#x55) (chip8-op-ld-i-vx ch8 (lo-nib w0)))
+              ((#x65) (chip8-op-ld-vx-i ch8 (lo-nib w0)))
+              (else #f)
+            ))
+    (else #f)
+    )
+  )
+
+; /// Emulates the execution of instructions continuously until the emulated instructions total
+; /// elapsed time reaches the equivalent of a frame.
+; pub fn frame(self: *Self, keypad: u16) !void {
+;     self.keypad = keypad;
+;     if (self.dt != 0) {
+;         self.dt -= 1;
+;     }
+;     self.tone = self.st != 0;
+;     if (self.st != 0) {
+;         self.st -= 1;
+;     }
+;     self.time += FRAME_TIME;
+; 
+;     while (self.time > 0) {
+;         if (self.pc > MEM_SIZE - 1) {
+;             return error.PcOutOfBounds;
+;         }
+;         const w0 = self.mem[self.pc];
+;         const w1 = self.mem[self.pc + 1];
+;         const adv = try self.exec(w0, w1);
+;         self.time -= @intCast(isize, adv);
+;     }
+; }
+
+(define (chip8-frame ch8 keypad)
+  (chip8-keypad-set! ch8 keypad)
+  (when (not (= (chip8-dt ch8) 0))
+    (chip8-dt-set! ch8 (- (chip8-dt ch8) 1)))
+  (chip8-tone-set! ch8 (not (= (chip8-st ch8) 0)))
+  (when (not (= (chip8-st ch8) 0))
+    (chip8-st-set! ch8 (- (chip8-st ch8) 1)))
+  (chip8-time-set! ch8 (+ (chip8-time ch8) frame-time))
+  (let exec ()
+    (unless (< (chip8-time ch8) 0)
+      (if (> (chip8-pc ch8) (- mem-size 1))
+          #f
+          (let ((w0 (vector-ref (chip8-mem ch8) (chip8-pc ch8)))
+                (w1 (vector-ref (chip8-mem ch8) (+ (chip8-pc ch8) 1))))
+               (chip8-time-set! ch8 (- (chip8-time ch8) (chip8-exec ch8 w0 w1)))
+               (exec)
+            )
+      )
+  )))
+
 (define (test ch8)
   (chip8-op-cls ch8)
   (chip8-op-call-rca-1802 ch8 0)
