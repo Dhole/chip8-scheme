@@ -20,6 +20,7 @@
 (define sprite-char-length 5)
 (define sprite-chars-addr #x0000)
 (define fb-len (/ (* screen-width screen-heigth) 8))
+(define frame-time 16666)
 
 (define (+u8 a b)
   ((mod+ #x100) a b))
@@ -133,6 +134,7 @@
 ; Op: Set Vx = v.
 (define (chip8-op-ld ch8 x v)
   (vector-set! (chip8-v ch8) x v)
+  (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   27)
 
 ; Op: Wait for a key press, store the value of the key in Vx.
@@ -207,13 +209,13 @@
 (define (chip8-op-add ch8 x b)
   (let ((vx (vector-ref (chip8-v ch8) x)))
     (vector-set! (chip8-v ch8)
+                 #xf
                  (if (> (+ vx b) #xff)
                      1
-                     0)
-                 #xf)
+                     0))
     (vector-set! (chip8-v ch8)
-                 (+u8 vx b)
-                 x))
+                 x
+                 (+u8 vx b)))
   (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   200)
 
@@ -327,27 +329,26 @@
          (col-b (remainder (+ col-a 1) (/ screen-width 8)))
          (fb (chip8-fb ch8)))
          (let draw ((i 0))
-           (let* ((byte (vector-ref (chip8-mem ch8) (+ (chip8-i ch8) i)))
-                  (y (remainder (+ pos-y i) screen-heigth))
-                  (a (arithmetic-shift byte (- 0 shift)))
-                  (off_a (+ (/ (* y screen-width) 8) col-a))
-                 )
-                 (set! collision
-                   (bitwise-ior collision (bitwise-and (vector-ref fb off_a) a)))
-                 (vector-set! fb off_a (bitwise-xor (vector-ref fb off_a) a))
-                 (when (not (= shift 0))
-                   (let ((b (arithmetic-shift byte (+ -8 shift)))
-                         (off_b (+ (/ (* y screen-width) 8) col-b)))
-                        (set! collision
-                          (bitwise-ior collision (bitwise-and (vector-ref fb off_b) b)))
-                        (vector-set! fb off_b (bitwise-xor (vector-ref fb off_b) b)
-                   )
-                 )
-             )
            (unless (= i n)
-             (begin
-               (vector-set! v i 0)
-               (zero (+ i 1)))))
+             (let* ((byte (vector-ref (chip8-mem ch8) (+ (chip8-i ch8) i)))
+                    (y (remainder (+ pos-y i) screen-heigth))
+                    (a (arithmetic-shift byte (- 0 shift)))
+                    (off_a (+ (/ (* y screen-width) 8) col-a))
+                   )
+                   (set! collision
+                     (bitwise-ior collision (bitwise-and (vector-ref fb off_a) a)))
+                   (vector-set! fb off_a (bitwise-xor (vector-ref fb off_a) a))
+                   (when (not (= shift 0))
+                     (let ((b (arithmetic-shift byte (+ -8 shift)))
+                           (off_b (+ (/ (* y screen-width) 8) col-b)))
+                          (set! collision
+                            (bitwise-ior collision (bitwise-and (vector-ref fb off_b) b)))
+                          (vector-set! fb off_b (bitwise-xor (vector-ref fb off_b) b))
+                     )
+                   )
+             )
+             (draw (+ i 1))
+           )
       )
       (vector-set! (chip8-v ch8)
                    (if (not (= collision 0))
@@ -491,30 +492,8 @@
     )
   )
 
-; /// Emulates the execution of instructions continuously until the emulated instructions total
-; /// elapsed time reaches the equivalent of a frame.
-; pub fn frame(self: *Self, keypad: u16) !void {
-;     self.keypad = keypad;
-;     if (self.dt != 0) {
-;         self.dt -= 1;
-;     }
-;     self.tone = self.st != 0;
-;     if (self.st != 0) {
-;         self.st -= 1;
-;     }
-;     self.time += FRAME_TIME;
-; 
-;     while (self.time > 0) {
-;         if (self.pc > MEM_SIZE - 1) {
-;             return error.PcOutOfBounds;
-;         }
-;         const w0 = self.mem[self.pc];
-;         const w1 = self.mem[self.pc + 1];
-;         const adv = try self.exec(w0, w1);
-;         self.time -= @intCast(isize, adv);
-;     }
-; }
-
+; Emulates the execution of instructions continuously until the emulated instructions total
+; elapsed time reaches the equivalent of a frame.
 (define (chip8-frame ch8 keypad)
   (chip8-keypad-set! ch8 keypad)
   (when (not (= (chip8-dt ch8) 0))
@@ -529,6 +508,7 @@
           #f
           (let ((w0 (vector-ref (chip8-mem ch8) (chip8-pc ch8)))
                 (w1 (vector-ref (chip8-mem ch8) (+ (chip8-pc ch8) 1))))
+               (print (format "~x: ~x ~x" (chip8-pc ch8) w0 w1))
                (chip8-time-set! ch8 (- (chip8-time ch8) (chip8-exec ch8 w0 w1)))
                (exec)
             )
@@ -646,19 +626,19 @@
       (do ((y 0 (add1 y)))
         ((= y screen-heigth))
         (let ((row-offset (* y pitch)))
-          (do ((x 0 (add1 x)))
-            ((= x (/ screen-width 8)))
-            (let ((byte (vector-ref fb (+ (/ (* y screen-width) 8) x))))
-              (print byte)
+          (do ((x8 0 (add1 x8)))
+            ((= x8 (/ screen-width 8)))
+            (let ((byte (vector-ref fb (+ (/ (* y screen-width) 8) x8))))
+              ; (print byte)
               (do ((i 0 (add1 i)))
                 ((= i 8))
-                (let ((offset (+ (* x 8) i))
+                (let ((offset (+ (* x8 8) i))
                       (on (bit-set? (- 7 i) byte)))
-                  (let* ((pixel-offset (+ row-offset (+ (* (* x 4) 8) i)))
+                  (let* ((pixel-offset (+ row-offset (* offset 4)))
                          (pixel (pointer+ pixels pixel-offset)))
-                        (print (format "~a ~a ~a" y (+ (* x 8) i) on))
+                        ; (print (format "~a ~a ~a ~a" pixel-offset y offset i) on)
                         (paint-pixel pixel (if on
-                                               '(#xff #xff #x00 #xff)
+                                               '(#xff #xff #xff #xff)
                                                '(#xff #x00 #x00 #x00))
                         )
                   )
@@ -690,6 +670,7 @@
                )
              )
           )
+          (chip8-frame ch8 0)
           (sdl-update-fb texture (chip8-fb ch8))
           (sdl2:render-copy! renderer texture #f #f)
           (sdl2:render-present! renderer)
@@ -706,7 +687,7 @@
       (unless (eof-object? b)
         (begin
           ; (display b)
-          (vector-set! rom i b)
+          (vector-set! rom i (char->integer b))
           (copy (+ i 1))
         )
       )
@@ -734,7 +715,7 @@
 
       (define ch8 (new-chip8))
       (chip8-load-rom ch8 rom)
-      (test ch8)
+      ; (test ch8)
       (receive (window renderer texture)
                (sdl-setup scale)
                (sdl-update-fb texture (chip8-fb ch8))
