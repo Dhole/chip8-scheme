@@ -76,7 +76,7 @@
   (let ((mem (chip8-mem ch8))
         (rom-len (vector-length rom)))
     (let copy ((i 0))
-      (unless (= i rom-len)
+      (unless (or (= i rom-len) (not (integer? (vector-ref rom i))))
           (begin
             (vector-set! mem (+ rom-addr i) (vector-ref rom i))
             (copy (+ i 1))
@@ -328,33 +328,32 @@
          (col-a (truncate (/ pos-x 8)))
          (col-b (remainder (+ col-a 1) (/ screen-width 8)))
          (fb (chip8-fb ch8)))
-         (let draw ((i 0))
-           (unless (= i n)
-             (let* ((byte (vector-ref (chip8-mem ch8) (+ (chip8-i ch8) i)))
-                    (y (remainder (+ pos-y i) screen-heigth))
-                    (a (arithmetic-shift byte (- 0 shift)))
-                    (off_a (+ (/ (* y screen-width) 8) col-a))
-                   )
-                   (set! collision
-                     (bitwise-ior collision (bitwise-and (vector-ref fb off_a) a)))
-                   (vector-set! fb off_a (bitwise-xor (vector-ref fb off_a) a))
-                   (when (not (= shift 0))
-                     (let ((b (arithmetic-shift byte (+ -8 shift)))
-                           (off_b (+ (/ (* y screen-width) 8) col-b)))
-                          (set! collision
-                            (bitwise-ior collision (bitwise-and (vector-ref fb off_b) b)))
-                          (vector-set! fb off_b (bitwise-xor (vector-ref fb off_b) b))
-                     )
-                   )
-             )
-             (draw (+ i 1))
-           )
-      )
-      (vector-set! (chip8-v ch8)
-                   (if (not (= collision 0))
-                       1
-                       0)
-                   #xf)
+        (do ((i 0 (add1 i)))
+          ((= i n))
+          (let* ((foo (print (format "ch8.i: ~a, i: ~a" (chip8-i ch8) i)))
+                 (byte (vector-ref (chip8-mem ch8) (+ (chip8-i ch8) i)))
+                 (y (remainder (+ pos-y i) screen-heigth))
+                 (a (arithmetic-shift byte (- 0 shift)))
+                 (off_a (+ (/ (* y screen-width) 8) col-a))
+                )
+                (set! collision
+                  (bitwise-ior collision (bitwise-and (vector-ref fb off_a) a)))
+                (vector-set! fb off_a (bitwise-xor (vector-ref fb off_a) a))
+                (when (not (= shift 0))
+                  (let ((b (arithmetic-shift byte (+ -8 shift)))
+                        (off_b (+ (/ (* y screen-width) 8) col-b)))
+                       (set! collision
+                         (bitwise-ior collision (bitwise-and (vector-ref fb off_b) b)))
+                       (vector-set! fb off_b (bitwise-xor (vector-ref fb off_b) b))
+                  )
+                )
+          )
+        )
+        (vector-set! (chip8-v ch8)
+                     (if (not (= collision 0))
+                         1
+                         0)
+                     #xf)
   )
   (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   22734)
@@ -374,66 +373,7 @@
 (define (chip8-v-hi-nib ch8 w)
   (vector-ref (chip8-v ch8) (hi-nib w)))
 
-; /// Execute the instruction defined by (w0, w1).  Returns the number of microseconds elapsed.
-; fn exec(self: *Self, w0: u8, w1: u8) !usize {
-;     return switch (w0 & 0xf0) {
-;         0x00 => switch (w1) {
-;             0xe0 => self.op_cls(),
-;             0xee => self.op_ret(),
-;             else => self.op_call_rca_1802(nnn(w0, w1)),
-;         },
-;         0x10 => self.op_jp(nnn(w0, w1)),
-;         0x20 => self.op_call(nnn(w0, w1)),
-;         0x30 => self.op_se(self.v[lo_nib(w0)], w1),
-;         0x40 => self.op_sne(self.v[lo_nib(w0)], w1),
-;         0x50 => self.op_se(self.v[lo_nib(w0)], self.v[hi_nib(w1)]),
-;         0x60 => self.op_ld(lo_nib(w0), w1),
-;         0x70 => self.op_add(lo_nib(w0), w1),
-;         0x80 => blk: {
-;             const a = lo_nib(w0);
-;             const b = self.v[hi_nib(w1)];
-;             break :blk switch (w1 & 0x0f) {
-;                 0x00 => self.op_ld(a, b),
-;                 0x01 => self.op_or(a, b),
-;                 0x02 => self.op_and(a, b),
-;                 0x03 => self.op_xor(a, b),
-;                 0x04 => self.op_add(a, b),
-;                 0x05 => self.op_sub(a, b),
-;                 0x06 => self.op_shr(a),
-;                 0x07 => self.op_subn(a, b),
-;                 0x0E => self.op_shl(a),
-;                 else => return error.InvalidOp,
-;             };
-;         },
-;         0x90 => switch (w1 & 0x0f) {
-;             0x00 => self.op_sne(self.v[lo_nib(w0)], self.v[hi_nib(w1)]),
-;             else => return error.InvalidOp,
-;         },
-;         0xA0 => self.op_ld_i(nnn(w0, w1)),
-;         0xB0 => self.op_jp(self.v[0] + nnn(w0, w1)),
-;         0xC0 => self.op_rnd(lo_nib(w0), w1),
-;         0xD0 => self.op_drw(self.v[lo_nib(w0)], self.v[hi_nib(w1)], lo_nib(w1)),
-;         0xE0 => switch (w1) {
-;             0x9E => self.op_skp(self.v[lo_nib(w0)]),
-;             0xA1 => self.op_sknp(self.v[lo_nib(w0)]),
-;             else => return error.InvalidOp,
-;         },
-;         0xF0 => switch (w1) {
-;             0x07 => self.op_ld(lo_nib(w0), self.dt),
-;             0x0A => self.op_ld_vx_k(lo_nib(w0)),
-;             0x15 => self.op_ld_dt(self.v[lo_nib(w0)]),
-;             0x18 => self.op_ld_st(self.v[lo_nib(w0)]),
-;             0x1E => self.op_add16(self.v[lo_nib(w0)]),
-;             0x29 => self.op_ld_f(self.v[lo_nib(w0)]),
-;             0x33 => self.op_ld_b(self.v[lo_nib(w0)]),
-;             0x55 => self.op_ld_i_vx(lo_nib(w0)),
-;             0x65 => self.op_ld_vx_i(lo_nib(w0)),
-;             else => return error.InvalidOp,
-;         },
-;         else => return error.InvalidOp,
-;     };
-; }
-
+; Execute the instruction defined by (w0, w1).  Returns the number of microseconds elapsed.
 (define (chip8-exec ch8 w0 w1)
   (case (bitwise-and w0 #xf0)
     ((#x00) (case w1
@@ -508,7 +448,10 @@
           #f
           (let ((w0 (vector-ref (chip8-mem ch8) (chip8-pc ch8)))
                 (w1 (vector-ref (chip8-mem ch8) (+ (chip8-pc ch8) 1))))
-               (print (format "~x: ~x ~x" (chip8-pc ch8) w0 w1))
+               ; (print (format "~x: ~x ~x" (chip8-pc ch8) w0 w1))
+               ; (print (format "m[1794]: ~a" (vector-ref (chip8-mem ch8) 1794)))
+               ; (print (format "m[1795]: ~a" (vector-ref (chip8-mem ch8) 1795)))
+               ; (print (format "m[1796]: ~a" (vector-ref (chip8-mem ch8) 1796)))
                (chip8-time-set! ch8 (- (chip8-time ch8) (chip8-exec ch8 w0 w1)))
                (exec)
             )
@@ -670,11 +613,12 @@
                )
              )
           )
+          ;(print (format "A m[1795]: ~a" (vector-ref (chip8-mem ch8) 1795)))
           (chip8-frame ch8 0)
           (sdl-update-fb texture (chip8-fb ch8))
           (sdl2:render-copy! renderer texture #f #f)
           (sdl2:render-present! renderer)
-          (sdl2:delay! 100)
+          ; (sdl2:delay! 100)
     )
   )
 )
@@ -714,7 +658,10 @@
       (define rom (read-rom-file rom-path))
 
       (define ch8 (new-chip8))
+      ; (print (format "m[1795]: ~a" (vector-ref (chip8-mem ch8) 1795)))
+      ; (print (format "C m[1795]: ~a" (vector-ref (chip8-mem ch8) 1795)))
       (chip8-load-rom ch8 rom)
+      ; (print (format "B m[1795]: ~a" (vector-ref (chip8-mem ch8) 1795)))
       ; (test ch8)
       (receive (window renderer texture)
                (sdl-setup scale)
