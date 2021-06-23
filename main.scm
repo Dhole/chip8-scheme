@@ -28,6 +28,10 @@
   ((mod- #x100) a b))
 (define (+u16 a b)
   ((mod+ #x10000) a b))
+(define (shlu8 a b)
+  (bitwise-and (arithmetic-shift a b) #xff))
+(define (shru8 a b)
+  (arithmetic-shift a (- 0 b)))
 
 (defstruct chip8
            mem
@@ -221,6 +225,7 @@
 
 ; Op: Set I = I + b.
 (define (chip8-op-add16 ch8 b)
+  ; (print (format "add16 ~a ~a" b (+u16 (chip8-i ch8) b)))
   (chip8-i-set! ch8 (+u16 (chip8-i ch8) b))
   (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   86)
@@ -228,24 +233,24 @@
 ; Op: Set Vx = Vx OR b.
 (define (chip8-op-or ch8 x b)
   (vector-set! (chip8-v ch8)
-               (bitwise-ior (vector-ref (chip8-v ch8) x) b)
-               x)
+               x
+               (bitwise-ior (vector-ref (chip8-v ch8) x) b))
   (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   200)
 
 ; Op: Set Vx = Vx AND b.
 (define (chip8-op-and ch8 x b)
   (vector-set! (chip8-v ch8)
-               (bitwise-and (vector-ref (chip8-v ch8) x) b)
-               x)
+               x
+               (bitwise-and (vector-ref (chip8-v ch8) x) b))
   (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   200)
 
 ; Op: Set Vx = Vx XOR b.
 (define (chip8-op-xor ch8 x b)
   (vector-set! (chip8-v ch8)
-               (bitwise-xor (vector-ref (chip8-v ch8) x) b)
-               x)
+               x
+               (bitwise-xor (vector-ref (chip8-v ch8) x) b))
   (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   200)
 
@@ -253,13 +258,13 @@
 (define (chip8-op-sub ch8 x b)
   (let ((vx (vector-ref (chip8-v ch8) x)))
     (vector-set! (chip8-v ch8)
+                 #xf
                  (if (> b vx)
                      1
-                     0)
-                 #xf)
+                     0))
     (vector-set! (chip8-v ch8)
-                 (-u8 vx b)
-                 x))
+                 x
+                 (-u8 vx b)))
   (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   200)
 
@@ -267,13 +272,13 @@
 (define (chip8-op-subn ch8 x b)
   (let ((vx (vector-ref (chip8-v ch8) x)))
     (vector-set! (chip8-v ch8)
+                 #xf
                  (if (> b vx)
                      0
-                     1)
-                 #xf)
+                     1))
     (vector-set! (chip8-v ch8)
-                 (-u8 vx b)
-                 x))
+                 x
+                 (-u8 vx b)))
   (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   200)
 
@@ -281,13 +286,13 @@
 (define (chip8-op-shr ch8 x)
   (let ((vx (vector-ref (chip8-v ch8) x)))
     (vector-set! (chip8-v ch8)
+                 #xf
                  (if (eq? (bitwise-and vx #x01) #x01)
                      1
-                     0)
-                 #xf)
+                     0))
     (vector-set! (chip8-v ch8)
-                 (arithmetic-shift vx -1)
-                 x))
+                 x
+                 (shru8 vx 1)))
   (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   200)
 
@@ -295,18 +300,19 @@
 (define (chip8-op-shl ch8 x)
   (let ((vx (vector-ref (chip8-v ch8) x)))
     (vector-set! (chip8-v ch8)
+                 #xf
                  (if (eq? (bitwise-and vx #x80) #x80)
                      1
-                     0)
-                 #xf)
+                     0))
     (vector-set! (chip8-v ch8)
-                 (arithmetic-shift vx 1)
-                 x))
+                 x
+                 (shlu8 vx 1)))
   (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   200)
 
 ; Op: Set I = addr
 (define (chip8-op-ld-i ch8 addr)
+  ; (print (format "ld-i ~a" addr))
   (chip8-i-set! ch8 addr)
   (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   55)
@@ -314,14 +320,15 @@
 ; Op: Set Vx = random byte AND v
 (define (chip8-op-rnd ch8 x v)
   (vector-set! (chip8-v ch8)
-               (bitwise-and (pseudo-random-integer  #x100) v)
-               x)
+               x
+               (bitwise-and (pseudo-random-integer  #x100) v))
   (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   164)
 
 ; Op: Display n-byte sprite starting at memory location I at (Vx, Vy), set VF = collision.
 (define (chip8-op-drw ch8 pos-x pos-y n)
   (define collision 0)
+  ; (print (format "drw (~a ~a) ~a" pos-x pos-y n))
   (let* ((pos-x (remainder pos-x 64))
          (pos-y (remainder pos-y 32))
          (shift (remainder pos-x 8))
@@ -330,17 +337,17 @@
          (fb (chip8-fb ch8)))
         (do ((i 0 (add1 i)))
           ((= i n))
-          (let* ((foo (print (format "ch8.i: ~a, i: ~a" (chip8-i ch8) i)))
-                 (byte (vector-ref (chip8-mem ch8) (+ (chip8-i ch8) i)))
-                 (y (remainder (+ pos-y i) screen-heigth))
-                 (a (arithmetic-shift byte (- 0 shift)))
+          (let* (;(foo (print (format "ch8.i: ~a, i: ~a" (chip8-i ch8) i)))
+                 (byte (vector-ref (chip8-mem ch8) (remainder (+ (chip8-i ch8) i) mem-size)))
+                 (y (+ pos-y i))
+                 (a (shru8 byte shift))
                  (off_a (+ (/ (* y screen-width) 8) col-a))
                 )
                 (set! collision
                   (bitwise-ior collision (bitwise-and (vector-ref fb off_a) a)))
                 (vector-set! fb off_a (bitwise-xor (vector-ref fb off_a) a))
                 (when (not (= shift 0))
-                  (let ((b (arithmetic-shift byte (+ -8 shift)))
+                  (let ((b (shlu8 byte (- 8 shift)))
                         (off_b (+ (/ (* y screen-width) 8) col-b)))
                        (set! collision
                          (bitwise-ior collision (bitwise-and (vector-ref fb off_b) b)))
@@ -350,13 +357,27 @@
           )
         )
         (vector-set! (chip8-v ch8)
+                     #xf
                      (if (not (= collision 0))
                          1
-                         0)
-                     #xf)
+                         0))
   )
   (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2))
   22734)
+
+; Op: Skip next instruction if key with the value of v is pressed.
+(define (chip8-op-skp ch8 v)
+  (if (bit-set? v (chip8-keypad ch8))
+      (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 4))
+      (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2)))
+  73)
+
+; Op: Skip next instruction if key with the value of v is not pressed.
+(define (chip8-op-sknp ch8 v)
+  (if (not (bit-set? v (chip8-keypad ch8)))
+      (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 4))
+      (chip8-pc-set! ch8 (+u16 (chip8-pc ch8) 2)))
+  73)
 
 (define (nnn w0 w1)
   (bitwise-ior (arithmetic-shift (bitwise-and w0 #x0f) 8) w1))
@@ -448,7 +469,7 @@
           #f
           (let ((w0 (vector-ref (chip8-mem ch8) (chip8-pc ch8)))
                 (w1 (vector-ref (chip8-mem ch8) (+ (chip8-pc ch8) 1))))
-               ; (print (format "~x: ~x ~x" (chip8-pc ch8) w0 w1))
+               ; (print (format "op ~x: ~x ~x (v: ~a)" (chip8-pc ch8) w0 w1 (chip8-v ch8)))
                ; (print (format "m[1794]: ~a" (vector-ref (chip8-mem ch8) 1794)))
                ; (print (format "m[1795]: ~a" (vector-ref (chip8-mem ch8) 1795)))
                ; (print (format "m[1796]: ~a" (vector-ref (chip8-mem ch8) 1796)))
